@@ -1,0 +1,19 @@
+{
+    "name": "soki/tinyapp",
+    "description": "The PHP Framework.",
+    "keywords": ["framework", "php"],
+    "license": "MIT",
+    "type": "library",
+    "require": {
+        "php": ">=7.0.5",
+        "soki/tinyphp": "0.1.*@dev"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "app/"
+        },
+        "files":[
+            "app/helpers.php"
+        ]
+    }
+}
