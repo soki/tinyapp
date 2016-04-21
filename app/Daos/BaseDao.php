@@ -2,13 +2,14 @@
 
 namespace App\Daos;
 
-use TinyPHP\Database\Client as DBClient;
-use Pheanstalk\Pheanstalk;
+use TinyPHP\Helper\DBHelper;
+use TinyPHP\Helper\RedisHelper;
 use Container;
+use Exception;
 
 class BaseDao
 {
-    protected $dbmod = 'mysql_main';
+    protected $dbmod = 'main';
     protected $entity;
     public static $sharedb = true;
 
@@ -16,53 +17,98 @@ class BaseDao
     {
     }
 
-    private function getDBConfig($dbmod)
+    public function db($mod = null)
     {
-        $conf = config('app'.$dbmod);
-        if (empty($conf)) {
-            return error(500, 'getdbconfig', $dbmod);
+        $dbmod = $mod == null ? $this->dbmod : $mod;
+        $name = 'dbclient'.$dbmod;
+        if (static::$sharedb && ($db = Container::instance($name))) {
+            $db->table($this->entity, true);
+
+            return $db;
         }
 
-        return $conf;
+        $conf = config('app.mysql');
+        if (!isset($conf[$mod])) {
+            throw new Exception('mysql config not found:'.$mod, 1);
+        }
+
+        $db = new DBHelper($conf[$mod]);
+        $db->table($this->entity, true);
+        if (static::$sharedb) {
+            Container::instance($name, $db);
+        }
+
+        return $db;
     }
 
-    public function disableShareDBClient()
+    public function disableShareDB()
     {
         static::$sharedb = false;
     }
 
-    public function dbClient($dbmod = null)
+    public static function redis($mod, $hashId = 0)
     {
-        $dbmod = $dbmod == null ? $this->dbmod : $dbmod;
-        $name = 'dbclient'.$dbmod;
-        if (static::$sharedb && ($client = Container::instance($name))) {
-            $client->table($this->entity, true);
-
-            return $client;
+        $name = 'redis'.$mod;
+        $redis = Container::instance($name);
+        if ($redis) {
+            return $redis;
         }
 
-        $conf = $this->getDBConfig($dbmod);
-        $client = new DBClient($conf);
-        $client->table($this->entity, true);
-        if (static::$sharedb) {
-            Container::instance($name, $client);
+        $redisConf = config('app.redis');
+        if (!isset($redisConf[$mod])) {
+            throw new Exception('redis config not found:'.$mod, 1);
         }
 
-        return $client;
+        if ($hashId) {
+            $hashConf = $redisConf[$mod];
+            $conf = [];
+            foreach ($hashConf as $value) {
+                if ($value['rate'] > $hashId) {
+                    break;
+                }
+                $conf = $value;
+            }
+        } else {
+            $conf = $redisConf[$mod];
+        }
+
+        $redis = new RedisHelper($conf, true);
+        Container::instance($name, $redis);
+
+        return $redis;
     }
 
-    public function beanstalkdClient()
+    public static function hashId($id)
     {
-        $name = 'queueclient';
-        $pheanstalk = Container::instance($name);
-        if ($pheanstalk) {
-            return $pheanstalk;
-        }
+        return $id % 128;
+    }
 
-        $conf = config('app.queue');
-        $pheanstalk = new Pheanstalk($conf['host'], $conf['port']);
-        Container::instance($name, $pheanstalk);
+    public static function redisHGet($id, $key, $field)
+    {
+        $hashId = static::hashId($id);
+        $key = static::makeKey($id, $key);
 
-        return $pheanstalk;
+        return static::redis('hash', $hashId)->hGet($key, $field);
+    }
+
+    public static function redisHMGet($id, $key, $fields)
+    {
+        $hashId = static::hashId($id);
+        $key = static::makeKey($id, $key);
+
+        return static::redis('hash', $hashId)->hMGet($key, $fields);
+    }
+
+    public static function redisHMSet($id, $key, array $data)
+    {
+        $hashId = static::hashId($id);
+        $key = static::makeKey($id, $key);
+
+        return static::redis('hash', $hashId)->hMSet($key, $data);
+    }
+
+    public static function makeKey($id, $key)
+    {
+        return $key.':'.$id;
     }
 }
